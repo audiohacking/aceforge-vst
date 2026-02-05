@@ -13,6 +13,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Xcode
+        run: |
+          sudo xcode-select -switch /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          
+      - name: Set compiler environment
+        run: |
+          echo "CC=/usr/bin/clang" >> $GITHUB_ENV
+          echo "CXX=/usr/bin/clang++" >> $GITHUB_ENV
+
       - name: Configure CMake
         run: |
           cmake -B build -G Xcode \

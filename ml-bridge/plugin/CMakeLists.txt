@@ -6,7 +6,7 @@ if(NOT APPLE)
   return()
 endif()
 
-enable_language(ObjectiveCXX)
+# ObjectiveCXX is now enabled at root level
 
 # Fetch JUCE
 include(FetchContent)

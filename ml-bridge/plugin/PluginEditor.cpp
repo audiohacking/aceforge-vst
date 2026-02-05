@@ -14,7 +14,7 @@ AceForgeBridgeAudioProcessorEditor::AceForgeBridgeAudioProcessorEditor(
     promptEditor.setMultiLine(false);
     promptEditor.setReturnKeyStartsNewLine(false);
     promptEditor.setText("upbeat electronic beat, 10s");
-    promptEditor.setPlaceholder("Describe the music (e.g. calm piano, 10s)");
+    promptEditor.setTextToShowWhenEmpty("Describe the music (e.g. calm piano, 10s)", juce::Colours::grey);
     addAndMakeVisible(promptEditor);
 
     durationLabel.setText("Duration (s):", juce::dontSendNotification);

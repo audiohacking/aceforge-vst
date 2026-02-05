@@ -1,6 +1,6 @@
 #pragma once
 
-#include <JuceHeader>
+#include <JuceHeader.h>
 #include "PluginProcessor.h"
 
 class AceForgeBridgeAudioProcessorEditor : public juce::AudioProcessorEditor,

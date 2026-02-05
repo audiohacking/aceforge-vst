@@ -53,6 +53,11 @@ target_sources(AceForgeBridge
   PluginEditor.cpp
 )
 
+# Generate JuceHeader.h for compatibility with older JUCE code patterns
+set_target_properties(AceForgeBridge PROPERTIES
+  JUCE_GENERATE_JUCE_HEADER ON
+)
+
 target_compile_definitions(AceForgeBridge
   PUBLIC
   JUCE_WEB_BROWSER=0

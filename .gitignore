@@ -9,6 +9,10 @@ release-artefacts/
 # JUCE FetchContent
 _deps/
 
+# CodeQL
+_codeql_build_dir/
+_codeql_detected_source_root
+
 # IDE
 .idea/
 *.xcuserstate

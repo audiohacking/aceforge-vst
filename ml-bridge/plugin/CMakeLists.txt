@@ -24,7 +24,7 @@ set(ACEFORGE_CLIENT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../AceForgeClient)
 add_library(AceForgeClient STATIC
   ${ACEFORGE_CLIENT_DIR}/AceForgeClientMac.mm
 )
-target_include_directories(AceForgeClient PUBLIC ${ACEFORGE_CLIENT_DIR})
+target_include_directories(AceForgeClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(AceForgeClient PUBLIC
   "-framework Foundation"
   "-framework Security"

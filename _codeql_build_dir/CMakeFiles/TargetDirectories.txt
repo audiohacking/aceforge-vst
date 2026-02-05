@@ -1,0 +1,4 @@
+/home/runner/work/aceforge-vst/aceforge-vst/_codeql_build_dir/CMakeFiles/edit_cache.dir
+/home/runner/work/aceforge-vst/aceforge-vst/_codeql_build_dir/CMakeFiles/rebuild_cache.dir
+/home/runner/work/aceforge-vst/aceforge-vst/_codeql_build_dir/ml-bridge/plugin/CMakeFiles/edit_cache.dir
+/home/runner/work/aceforge-vst/aceforge-vst/_codeql_build_dir/ml-bridge/plugin/CMakeFiles/rebuild_cache.dir

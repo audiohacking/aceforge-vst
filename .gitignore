@@ -1,0 +1,21 @@
+# Build
+build/
+out/
+release-artefacts/
+*.o
+*.dylib
+*.a
+
+# JUCE FetchContent
+_deps/
+
+# IDE
+.idea/
+*.xcuserstate
+*.xcworkspace
+
+# macOS
+.DS_Store
+
+# AceForgeClient object (local compile)
+ml-bridge/AceForgeClient/AceForgeClientMac.o

@@ -1,0 +1,67 @@
+# Build and release AceForge Bridge AU + VST3 (macOS) on release
+name: Build and release plugins (macOS)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Xcode \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cmake --build build --config Release -- -quiet
+
+      - name: Locate plugin artefacts
+        id: artefacts
+        run: |
+          set -e
+          AU=$(find build -name "AceForge Bridge.component" -type d 2>/dev/null | head -1)
+          VST3=$(find build -name "AceForge Bridge.vst3" -type d 2>/dev/null | head -1)
+          [ -n "$AU" ] || AU=$(find build -name "*.component" -type d 2>/dev/null | head -1)
+          [ -n "$VST3" ] || VST3=$(find build -name "*.vst3" -type d 2>/dev/null | head -1)
+          echo "au_path=$AU" >> $GITHUB_OUTPUT
+          echo "vst3_path=$VST3" >> $GITHUB_OUTPUT
+          echo "Found AU: $AU"
+          echo "Found VST3: $VST3"
+          if [ -z "$AU" ] || [ -z "$VST3" ]; then
+            echo "Plugin artefacts not found. Build tree:"
+            find build -type d \( -name "*.component" -o -name "*.vst3" \) 2>/dev/null || true
+            exit 1
+          fi
+
+      - name: Create zip archives for release
+        run: |
+          mkdir -p release-artefacts
+          cp -R "${{ steps.artefacts.outputs.au_path }}" "release-artefacts/AceForge Bridge.component"
+          cp -R "${{ steps.artefacts.outputs.vst3_path }}" "release-artefacts/AceForge Bridge.vst3"
+          cd release-artefacts
+          zip -r "AceForgeBridge-macOS-AU-VST3.zip" "AceForge Bridge.component" "AceForge Bridge.vst3"
+          cd ..
+          echo "zip_path=release-artefacts/AceForgeBridge-macOS-AU-VST3.zip" >> $GITHUB_ENV
+
+      - name: Upload release assets
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-artefacts/AceForgeBridge-macOS-AU-VST3.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artefacts (workflow_dispatch or no release)
+        if: github.event_name != 'release' || github.event.release == null
+        uses: actions/upload-artifact@v4
+        with:
+          name: AceForgeBridge-macOS-plugins
+          path: release-artefacts/

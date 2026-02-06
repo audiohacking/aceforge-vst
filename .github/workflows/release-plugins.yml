@@ -126,7 +126,7 @@ jobs:
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+          tag_name: ${{ (github.event_name == 'release' && github.event.release.tag_name) || inputs.release_tag }}
           files: |
             release-artefacts/AceForgeBridge-macOS-AU-VST3.zip
             release-artefacts/AceForgeBridge-macOS-Installer.pkg

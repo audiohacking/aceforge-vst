@@ -6,6 +6,9 @@ on:
     types: [published]
   workflow_dispatch:
 
+permissions:
+  contents: write  # Required to upload release assets
+
 jobs:
   build-macos:
     runs-on: macos-latest

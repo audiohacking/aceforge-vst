@@ -5,6 +5,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to upload artifacts to (e.g., v1.0.0). Leave empty to skip upload.'
+        required: false
+        type: string
 
 permissions:
   contents: write  # Required to upload release assets
@@ -118,9 +123,10 @@ jobs:
           fi
 
       - name: Upload release assets
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
           files: |
             release-artefacts/AceForgeBridge-macOS-AU-VST3.zip
             release-artefacts/AceForgeBridge-macOS-Installer.pkg

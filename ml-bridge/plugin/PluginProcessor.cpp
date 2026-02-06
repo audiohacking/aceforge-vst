@@ -1,5 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <cmath>
+#include <vector>
 #include <thread>
 #include <chrono>
 
@@ -312,7 +314,7 @@ void AceForgeBridgeAudioProcessor::changeProgramName(int index, const juce::Stri
     juce::ignoreUnused(index, newName);
 }
 
-bool AceForgeBridgeAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
+bool AceForgeBridgeAudioProcessor::isBusesLayoutSupported(const juce::AudioProcessor::BusesLayout& layouts) const
 {
     if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::mono() &&
         layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())

@@ -5,6 +5,9 @@ Experimental **AU** and **VST3** plugin that connects your DAW to the [AceForge]
 - **Target:** macOS (Apple Silicon); build via CMake + JUCE.
 - **API:** Local HTTP, e.g. `http://127.0.0.1:5056` (AceForge server).
 
+<img width="600" alt="Screenshot 2026-02-06 at 16 42 12" src="https://github.com/user-attachments/assets/1efbd3b3-4112-4aca-ad15-2221fd99f4d7" />
+
+
 ## Quick start
 
 1. **Build** (from repo root):

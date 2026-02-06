@@ -430,7 +430,7 @@ void AceForgeBridgeAudioProcessor::handleAsyncUpdate()
             juce::WavAudioFormat wavFormat;
             if (auto* writer = wavFormat.createWriterFor(raw, fileSampleRate, static_cast<unsigned int>(numCh), 24, {}, 0))
             {
-                if (writer->writeFromFloatSampleBuffer(fileBuffer, 0, numSamples))
+                if (writer->writeFromAudioSampleBuffer(fileBuffer, 0, numSamples))
                     addToLibrary(wavFile, promptForLibrary);
                 delete writer;
             }

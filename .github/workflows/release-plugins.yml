@@ -82,12 +82,29 @@ jobs:
           cd release-artefacts && zip -r "AceForgeBridge-macOS-AU-VST3.zip" "AceForge Bridge.component" "AceForge Bridge.vst3" && cd ..
           echo "Plugin bundles signed; zip created."
 
-      - name: Prepare pkg payload
+      - name: Prepare pkg payload and postinstall script
         run: |
-          mkdir -p payload/Library/Audio/Plug-Ins/Components
-          mkdir -p payload/Library/Audio/Plug-Ins/VST3
-          cp -R "release-artefacts/AceForge Bridge.component" "payload/Library/Audio/Plug-Ins/Components/"
-          cp -R "release-artefacts/AceForge Bridge.vst3" "payload/Library/Audio/Plug-Ins/VST3/"
+          STAGING="payload/tmp/aceforge_bridge_payload"
+          mkdir -p "$STAGING/Components" "$STAGING/VST3"
+          cp -R "release-artefacts/AceForge Bridge.component" "$STAGING/Components/"
+          cp -R "release-artefacts/AceForge Bridge.vst3" "$STAGING/VST3/"
+          mkdir -p pkg-scripts
+          cat > pkg-scripts/postinstall << 'POSTINSTALL'
+#!/bin/bash
+set -e
+CONSOLE_USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo "")
+[ -z "$CONSOLE_USER" ] && CONSOLE_USER=$(logname 2>/dev/null || true)
+[ -z "$CONSOLE_USER" ] && CONSOLE_USER=$(who | awk '{print $1}' | head -1)
+TARGET_BASE="/Users/$CONSOLE_USER/Library/Audio/Plug-Ins"
+STAGING_ROOT="/tmp/aceforge_bridge_payload"
+if [ -d "$STAGING_ROOT" ] && [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
+  mkdir -p "$TARGET_BASE/Components" "$TARGET_BASE/VST3"
+  [ -d "$STAGING_ROOT/Components" ] && cp -R "$STAGING_ROOT/Components/"* "$TARGET_BASE/Components/" 2>/dev/null || true
+  [ -d "$STAGING_ROOT/VST3" ] && cp -R "$STAGING_ROOT/VST3/"* "$TARGET_BASE/VST3/" 2>/dev/null || true
+  rm -rf "$STAGING_ROOT"
+fi
+POSTINSTALL
+          chmod +x pkg-scripts/postinstall
 
       - name: Build macOS installer (.pkg)
         run: |
@@ -96,8 +113,9 @@ jobs:
             --identifier com.aceforge.bridge \
             --version 0.1.0 \
             --install-location / \
+            --scripts pkg-scripts \
             release-artefacts/AceForgeBridge-macOS-Installer.pkg
-          echo "Installer places AU in /Library/Audio/Plug-Ins/Components and VST3 in /Library/Audio/Plug-Ins/VST3"
+          echo "Installer copies plugins to ~/Library/Audio/Plug-Ins/Components and ~/Library/Audio/Plug-Ins/VST3 (current user)"
 
       # Sign the .pkg so macOS doesn't show "unidentified developer". Use Developer ID Installer cert.
       - name: Codesign installer (.pkg)

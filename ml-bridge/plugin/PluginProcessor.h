@@ -76,6 +76,11 @@ private:
     std::vector<float> playbackBuffer_;
     std::atomic<bool> playbackBufferReady_{ false };
 
+    // New playback data is handed off via pending buffer; only the audio thread calls fifo reset (AbstractFifo is not safe to reset from another thread).
+    std::vector<float> pendingPlaybackBuffer_;
+    std::atomic<int> pendingPlaybackFrames_{ 0 };
+    std::atomic<bool> pendingPlaybackReady_{ false };
+
     std::atomic<double> sampleRate_{ 44100.0 };
 
     // Pending WAV bytes from background thread; decoded on message thread (JUCE not thread-safe)

@@ -31,19 +31,19 @@ target_link_libraries(AceForgeClient PUBLIC
 )
 target_compile_features(AceForgeClient PUBLIC cxx_std_17)
 
-# Plugin target
+# Plugin target: generator (output-only, no MIDI), not instrument/synth
 juce_add_plugin(AceForgeBridge
   VERSION 0.1.0
-  COMPANY_NAME "AceForge"
-  IS_SYNTH TRUE
+  COMPANY_NAME "AudioHacking"
+  IS_SYNTH FALSE
   NEEDS_MIDI_INPUT FALSE
   NEEDS_MIDI_OUTPUT FALSE
   IS_MIDI_EFFECT FALSE
   EDITOR_WANTS_KEYBOARD_FOCUS FALSE
-  PLUGIN_MANUFACTURER_CODE Acfg
+  PLUGIN_MANUFACTURER_CODE AuHk
   PLUGIN_CODE AfBr
   FORMATS AU VST3
-  PRODUCT_NAME "AceForge Bridge"
+  PRODUCT_NAME "AceForge-Bridge"
   COPY_PLUGIN_AFTER_BUILD FALSE
 )
 

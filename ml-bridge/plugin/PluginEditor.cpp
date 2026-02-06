@@ -96,7 +96,7 @@ void AceForgeBridgeAudioProcessorEditor::paint(juce::Graphics& g)
     g.setColour(juce::Colours::white);
     g.setFont(18.0f);
     auto r = getLocalBounds().reduced(12);
-    g.drawText("AceForge Bridge", r.getX(), r.getY(), 220, 26, juce::Justification::left);
+    g.drawText("AceForge-Bridge", r.getX(), r.getY(), 220, 26, juce::Justification::left);
 }
 
 void AceForgeBridgeAudioProcessorEditor::resized()

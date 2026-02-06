@@ -187,44 +187,33 @@ void AceForgeBridgeAudioProcessor::pushSamplesToPlayback(const float* interleave
 {
     if (numFrames <= 0 || interleaved == nullptr)
         return;
-    playbackFifo_.reset();
     const double hostRate = sampleRate_.load(std::memory_order_relaxed);
     const double ratio = sourceSampleRate > 0.0 ? hostRate / sourceSampleRate : 1.0;
     const int outFrames = static_cast<int>(std::round(static_cast<double>(numFrames) * ratio));
-    if (outFrames <= 0)
+    if (outFrames <= 0 || outFrames > kPlaybackFifoFrames)
         return;
 
-    int start1, block1, start2, block2;
-    playbackFifo_.prepareToWrite(outFrames, start1, block1, start2, block2);
-
-    auto writeFrames = [&](int fifoStart, int count, int outputBaseIndex)
+    pendingPlaybackBuffer_.resize(static_cast<size_t>(outFrames) * 2u);
+    float* out = pendingPlaybackBuffer_.data();
+    for (int i = 0; i < outFrames; ++i)
     {
-        for (int i = 0; i < count; ++i)
+        const double srcIdx = ratio > 0.0 ? (double)i / ratio : (double)i;
+        const int i0 = std::min(std::max(0, static_cast<int>(srcIdx)), numFrames - 1);
+        const int i1 = std::min(i0 + 1, numFrames - 1);
+        const float t = static_cast<float>(srcIdx - std::floor(srcIdx));
+        float l = 0.0f, r = 0.0f;
+        if (sourceChannels >= 1)
         {
-            const int outIdx = outputBaseIndex + i;
-            const double srcIdx = ratio > 0.0 ? (double)outIdx / ratio : (double)outIdx;
-            const int i0 = std::min(std::max(0, static_cast<int>(srcIdx)), numFrames - 1);
-            const int i1 = std::min(i0 + 1, numFrames - 1);
-            const float t = static_cast<float>(srcIdx - std::floor(srcIdx));
-            float l = 0.0f, r = 0.0f;
-            if (sourceChannels >= 1)
-            {
-                l = interleaved[i0 * sourceChannels] * (1.0f - t) + interleaved[i1 * sourceChannels] * t;
-                r = sourceChannels >= 2
-                        ? interleaved[i0 * sourceChannels + 1] * (1.0f - t) + interleaved[i1 * sourceChannels + 1] * t
-                        : l;
-            }
-            const size_t base = static_cast<size_t>(fifoStart + i) * 2u;
-            if (base + 1 < playbackBuffer_.size())
-            {
-                playbackBuffer_[base] = l;
-                playbackBuffer_[base + 1] = r;
-            }
+            l = interleaved[i0 * sourceChannels] * (1.0f - t) + interleaved[i1 * sourceChannels] * t;
+            r = sourceChannels >= 2
+                    ? interleaved[i0 * sourceChannels + 1] * (1.0f - t) + interleaved[i1 * sourceChannels + 1] * t
+                    : l;
         }
-    };
-    writeFrames(start1, block1, 0);
-    writeFrames(start2, block2, block1);
-    playbackFifo_.finishedWrite(block1 + block2);
+        out[i * 2] = l;
+        out[i * 2 + 1] = r;
+    }
+    pendingPlaybackFrames_.store(outFrames, std::memory_order_release);
+    pendingPlaybackReady_.store(true, std::memory_order_release);
 }
 
 void AceForgeBridgeAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
@@ -238,6 +227,31 @@ void AceForgeBridgeAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
     {
         buffer.clear();
         return;
+    }
+
+    // Apply any new playback buffer from the message thread; only we (audio thread) may reset the fifo (JUCE AbstractFifo is single-reader single-writer; reset from another thread causes crashes).
+    if (pendingPlaybackReady_.exchange(false, std::memory_order_acq_rel))
+    {
+        const int N = pendingPlaybackFrames_.load(std::memory_order_acquire);
+        if (N > 0 && N <= kPlaybackFifoFrames && pendingPlaybackBuffer_.size() >= static_cast<size_t>(N) * 2u)
+        {
+            playbackFifo_.reset();
+            int start1, block1, start2, block2;
+            playbackFifo_.prepareToWrite(N, start1, block1, start2, block2);
+            const float* src = pendingPlaybackBuffer_.data();
+            auto copyBlock = [&](int fifoStart, int count, int srcOffset)
+            {
+                for (int i = 0; i < count && (fifoStart + i) * 2 + 1 < static_cast<int>(playbackBuffer_.size()); ++i)
+                {
+                    const int s = (srcOffset + i) * 2;
+                    playbackBuffer_[static_cast<size_t>(fifoStart + i) * 2u] = src[s];
+                    playbackBuffer_[static_cast<size_t>(fifoStart + i) * 2u + 1u] = src[s + 1];
+                }
+            };
+            copyBlock(start1, block1, 0);
+            copyBlock(start2, block2, block1);
+            playbackFifo_.finishedWrite(block1 + block2);
+        }
     }
 
     int start1, block1, start2, block2;

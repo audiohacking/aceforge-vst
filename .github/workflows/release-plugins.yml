@@ -1,4 +1,4 @@
-# Build and release AceForge Bridge AU + VST3 (macOS) on release
+# Build and release AceForge-Bridge AU + VST3 (macOS); manufacturer AudioHacking
 name: Build and release plugins (macOS)
 
 on:
@@ -42,8 +42,8 @@ jobs:
         id: artefacts
         run: |
           set -e
-          AU=$(find build -name "AceForge Bridge.component" -type d 2>/dev/null | head -1)
-          VST3=$(find build -name "AceForge Bridge.vst3" -type d 2>/dev/null | head -1)
+          AU=$(find build -name "AceForge-Bridge.component" -type d 2>/dev/null | head -1)
+          VST3=$(find build -name "AceForge-Bridge.vst3" -type d 2>/dev/null | head -1)
           [ -n "$AU" ] || AU=$(find build -name "*.component" -type d 2>/dev/null | head -1)
           [ -n "$VST3" ] || VST3=$(find build -name "*.vst3" -type d 2>/dev/null | head -1)
           echo "au_path=$AU" >> $GITHUB_OUTPUT
@@ -59,8 +59,8 @@ jobs:
       - name: Create zip archives for release
         run: |
           mkdir -p release-artefacts
-          cp -R "${{ steps.artefacts.outputs.au_path }}" "release-artefacts/AceForge Bridge.component"
-          cp -R "${{ steps.artefacts.outputs.vst3_path }}" "release-artefacts/AceForge Bridge.vst3"
+          cp -R "${{ steps.artefacts.outputs.au_path }}" "release-artefacts/AceForge-Bridge.component"
+          cp -R "${{ steps.artefacts.outputs.vst3_path }}" "release-artefacts/AceForge-Bridge.vst3"
           echo "zip_path=release-artefacts/AceForgeBridge-macOS-AU-VST3.zip" >> $GITHUB_ENV
 
       # Sign AU/VST3 (for zip and for pkg). Without secret: ad-hoc. With MACOS_SIGNING_IDENTITY (Developer ID Application): proper sign.
@@ -71,51 +71,33 @@ jobs:
           IDENTITY="${MACOS_SIGNING_IDENTITY:--}"
           echo "Signing plugins with identity: $IDENTITY"
           if [ "$IDENTITY" = "-" ]; then
-            xcrun codesign --force --sign - --deep "release-artefacts/AceForge Bridge.component"
-            xcrun codesign --force --sign - --deep "release-artefacts/AceForge Bridge.vst3"
+            xcrun codesign --force --sign - --deep "release-artefacts/AceForge-Bridge.component"
+            xcrun codesign --force --sign - --deep "release-artefacts/AceForge-Bridge.vst3"
           else
             xcrun codesign --force --sign "$IDENTITY" --options runtime --timestamp --deep \
-              "release-artefacts/AceForge Bridge.component"
+              "release-artefacts/AceForge-Bridge.component"
             xcrun codesign --force --sign "$IDENTITY" --options runtime --timestamp --deep \
-              "release-artefacts/AceForge Bridge.vst3"
+              "release-artefacts/AceForge-Bridge.vst3"
           fi
-          cd release-artefacts && zip -r "AceForgeBridge-macOS-AU-VST3.zip" "AceForge Bridge.component" "AceForge Bridge.vst3" && cd ..
+          cd release-artefacts && zip -r "AceForgeBridge-macOS-AU-VST3.zip" "AceForge-Bridge.component" "AceForge-Bridge.vst3" && cd ..
           echo "Plugin bundles signed; zip created."
 
-      - name: Prepare pkg payload and postinstall script
+      - name: Prepare pkg payload
         run: |
-          STAGING="payload/tmp/aceforge_bridge_payload"
-          mkdir -p "$STAGING/Components" "$STAGING/VST3"
-          cp -R "release-artefacts/AceForge Bridge.component" "$STAGING/Components/"
-          cp -R "release-artefacts/AceForge Bridge.vst3" "$STAGING/VST3/"
-          mkdir -p pkg-scripts
-          cat > pkg-scripts/postinstall << 'POSTINSTALL'
-#!/bin/bash
-set -e
-CONSOLE_USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo "")
-[ -z "$CONSOLE_USER" ] && CONSOLE_USER=$(logname 2>/dev/null || true)
-[ -z "$CONSOLE_USER" ] && CONSOLE_USER=$(who | awk '{print $1}' | head -1)
-TARGET_BASE="/Users/$CONSOLE_USER/Library/Audio/Plug-Ins"
-STAGING_ROOT="/tmp/aceforge_bridge_payload"
-if [ -d "$STAGING_ROOT" ] && [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
-  mkdir -p "$TARGET_BASE/Components" "$TARGET_BASE/VST3"
-  [ -d "$STAGING_ROOT/Components" ] && cp -R "$STAGING_ROOT/Components/"* "$TARGET_BASE/Components/" 2>/dev/null || true
-  [ -d "$STAGING_ROOT/VST3" ] && cp -R "$STAGING_ROOT/VST3/"* "$TARGET_BASE/VST3/" 2>/dev/null || true
-  rm -rf "$STAGING_ROOT"
-fi
-POSTINSTALL
-          chmod +x pkg-scripts/postinstall
+          mkdir -p payload/Library/Audio/Plug-Ins/Components
+          mkdir -p payload/Library/Audio/Plug-Ins/VST3
+          cp -R "release-artefacts/AceForge-Bridge.component" "payload/Library/Audio/Plug-Ins/Components/"
+          cp -R "release-artefacts/AceForge-Bridge.vst3" "payload/Library/Audio/Plug-Ins/VST3/"
 
       - name: Build macOS installer (.pkg)
         run: |
           pkgbuild \
             --root payload \
-            --identifier com.aceforge.bridge \
+            --identifier com.audiohacking.aceforge-bridge \
             --version 0.1.0 \
             --install-location / \
-            --scripts pkg-scripts \
             release-artefacts/AceForgeBridge-macOS-Installer.pkg
-          echo "Installer copies plugins to ~/Library/Audio/Plug-Ins/Components and ~/Library/Audio/Plug-Ins/VST3 (current user)"
+          echo "Installer places AU and VST3 in /Library/Audio/Plug-Ins/Components and /Library/Audio/Plug-Ins/VST3"
 
       # Sign the .pkg so macOS doesn't show "unidentified developer". Use Developer ID Installer cert.
       - name: Codesign installer (.pkg)

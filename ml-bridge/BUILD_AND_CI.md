@@ -16,6 +16,21 @@ Then locate `AceForge Bridge.component` and `AceForge Bridge.vst3` under `build/
 
 Rescan plugins in your DAW. Ensure **AceForge** is running at `http://127.0.0.1:5056` when using the plugin.
 
+### Local installer (.pkg) for testing
+
+From the **repo root**, after building:
+
+```bash
+./scripts/build-installer-pkg.sh [--sign-plugins] [--version 0.1.0]
+```
+
+- **Output:** `release-artefacts/AceForgeBridge-macOS-Installer.pkg` and `release-artefacts/AceForgeBridge-macOS-AU-VST3.zip`.
+- **Install:** `sudo installer -pkg release-artefacts/AceForgeBridge-macOS-Installer.pkg -target /` or open the `.pkg` in Finder.
+- **`--sign-plugins`** — ad-hoc sign the AU/VST3 bundles (optional, for local testing).
+- **`--version`** — set the pkg version (default `0.1.0`).
+
+The pkg installs to `/Library/Audio/Plug-Ins/Components` (AU) and `/Library/Audio/Plug-Ins/VST3` (VST3).
+
 ---
 
 ## GitHub Actions — release workflow

@@ -38,7 +38,7 @@ void LibraryListBox::mouseDrag(const juce::MouseEvent& e)
         return;
     if (e.getDistanceFromDragStart() < 8)
         return;
-    int row = getRowContainingPoint(e.x, e.y);
+    int row = getRowContainingPosition(e.x, e.y);
     auto entries = processorRef.getLibraryEntries();
     if (row < 0 || row >= static_cast<int>(entries.size()))
         return;

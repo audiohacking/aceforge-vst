@@ -358,7 +358,6 @@ void AceForgeBridgeAudioProcessor::handleAsyncUpdate()
 {
     std::vector<uint8_t> wavBytes;
     juce::String promptForLibrary;
-    int durationForLibrary = 0;
     {
         juce::ScopedLock l(pendingWavLock_);
         if (pendingWavBytes_.empty())
@@ -366,7 +365,6 @@ void AceForgeBridgeAudioProcessor::handleAsyncUpdate()
         wavBytes = std::move(pendingWavBytes_);
         pendingWavBytes_.clear();
         promptForLibrary = pendingPrompt_;
-        durationForLibrary = pendingDurationSec_;
     }
 
     try
@@ -424,19 +422,17 @@ void AceForgeBridgeAudioProcessor::handleAsyncUpdate()
         juce::String baseName = "gen_" + juce::Time::getCurrentTime().formatted("%Y%m%d_%H%M%S");
         juce::File wavFile = libDir.getChildFile(baseName + ".wav");
         std::unique_ptr<juce::OutputStream> outStream = wavFile.createOutputStream();
-        if (outStream.get() != nullptr)
+        if (outStream != nullptr)
         {
-            juce::OutputStream* raw = outStream.release();
             juce::WavAudioFormat wavFormat;
-            if (auto* writer = wavFormat.createWriterFor(raw, fileSampleRate, static_cast<unsigned int>(numCh), 24, {}, 0))
+            auto options = juce::AudioFormatWriterOptions{}
+                              .withSampleRate(fileSampleRate)
+                              .withNumChannels(numCh)
+                              .withBitsPerSample(24);
+            if (auto writer = wavFormat.createWriterFor(outStream, options))
             {
                 if (writer->writeFromAudioSampleBuffer(fileBuffer, 0, numSamples))
                     addToLibrary(wavFile, promptForLibrary);
-                delete writer;
-            }
-            else
-            {
-                delete raw;
             }
         }
     }

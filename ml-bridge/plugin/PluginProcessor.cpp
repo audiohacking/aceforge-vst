@@ -143,10 +143,10 @@ void AceForgeBridgeAudioProcessor::runGenerationThread(juce::String prompt, int 
                 triggerAsyncUpdate();
                 return;
             }
-            juce::MemoryInputStream mis(wavBytes.data(), static_cast<size_t>(wavBytes.size()), false);
             juce::AudioFormatManager fm;
             fm.registerFormat(new juce::WavAudioFormat(), true);
-            std::unique_ptr<juce::AudioFormatReader> reader(fm.createReaderFor(&mis));
+            auto mis = std::make_unique<juce::MemoryInputStream>(wavBytes.data(), static_cast<size_t>(wavBytes.size()), false);
+            std::unique_ptr<juce::AudioFormatReader> reader(fm.createReaderFor(std::move(mis)));
             if (!reader)
             {
                 state_.store(State::Failed);

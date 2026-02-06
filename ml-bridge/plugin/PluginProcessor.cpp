@@ -20,7 +20,7 @@ void logErrorToFileAndStderr(const juce::String& message)
     {
         juce::File logFile = logDir.getChildFile("AceForgeBridge.log");
         juce::String line = juce::Time::getCurrentTime().formatted("%Y-%m-%d %H:%M:%S") + " " + message + "\n";
-        if (logFile.appendData(line.toRawUTF8(), line.getNumBytesAsUTF8()).failed())
+        if (!logFile.appendData(line.toRawUTF8(), line.getNumBytesAsUTF8()))
         { /* ignore */ }
     }
 }
@@ -427,7 +427,8 @@ void AceForgeBridgeAudioProcessor::handleAsyncUpdate()
         if (outStream.get() != nullptr)
         {
             juce::OutputStream* raw = outStream.release();
-            if (auto* writer = fm.createWriterFor(raw, fileSampleRate, static_cast<unsigned int>(numCh), 24, {}, 0))
+            juce::WavAudioFormat wavFormat;
+            if (auto* writer = wavFormat.createWriterFor(raw, fileSampleRate, static_cast<unsigned int>(numCh), 24, {}, 0))
             {
                 if (writer->writeFromFloatSampleBuffer(fileBuffer, 0, numSamples))
                     addToLibrary(wavFile, promptForLibrary);

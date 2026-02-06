@@ -20,7 +20,7 @@ struct GenerateParams {
     std::string lyrics = "[inst]";
     bool instrumental = true;
     int durationSeconds = 30;
-    int inferenceSteps = 55;
+    int inferenceSteps = 15;  // use 15 for faster testing; 55 for higher quality
     float guidanceScale = 6.0f;
     bool randomSeed = true;
     int64_t seed = 0;

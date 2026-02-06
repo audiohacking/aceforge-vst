@@ -23,7 +23,7 @@ The plugin talks to **AceForge** over HTTP (no custom socket protocol). Typical 
      "songDescription": "upbeat electronic beat with synth",
      "instrumental": true,
      "duration": 30,
-     "inferenceSteps": 55,
+     "inferenceSteps": 15,
      "guidanceScale": 6.0,
      "taskType": "text2music",
      "title": "aceforge_export",
@@ -60,6 +60,7 @@ The plugin talks to **AceForge** over HTTP (no custom socket protocol). Typical 
 | Health         | GET    | `/api/generate/health`         | Check server before starting a job.        |
 | Start job      | POST   | `/api/generate`                | JSON body; returns `jobId`.                 |
 | Job status     | GET    | `/api/generate/status/<job_id>`| Poll until `succeeded` or `failed`.        |
+| Cancel job     | POST   | `/api/generate/cancel/<job_id>`| Optional; cancel a queued or running job.  |
 | Progress       | GET    | `/progress`                    | Optional; for progress UI.                 |
 | Generated audio| GET    | `/audio/<filename>`            | Binary WAV; filename from `result.audioUrls`|
 | Ref audio      | GET    | `/audio/refs/<filename>`       | If using reference tracks.                 |
@@ -75,7 +76,7 @@ Relevant for the plugin (see AceForge API reference for full list):
 - **lyrics**: optional; use `"[inst]"` for instrumental.
 - **instrumental**: boolean (default `true`).
 - **duration**: seconds (15–240).
-- **inferenceSteps**: int (e.g. 55).
+- **inferenceSteps**: int (e.g. 15 for testing, 55 for quality).
 - **guidanceScale**: float (e.g. 6.0).
 - **seed**: int; if **randomSeed** is true, server may override.
 - **taskType**: `"text2music"` | `"retake"` | `"repaint"` | `"extend"` | `"cover"` | `"audio2audio"`.
@@ -88,21 +89,27 @@ Relevant for the plugin (see AceForge API reference for full list):
 
 ## Status response (succeeded)
 
-Example when `status === "succeeded"`:
+Example when `status === "succeeded"` (verified 2026-02-06):
 
 ```json
 {
+  "error": null,
   "jobId": "...",
   "status": "succeeded",
   "result": {
-    "audioUrls": ["/audio/aceforge_export.wav"],
-    "duration": 30,
-    "status": "succeeded"
+    "audioUrls": ["/audio/dirt_cheap_test.wav"],
+    "bpm": null,
+    "duration": 14,
+    "keyScale": null,
+    "status": "succeeded",
+    "timeSignature": null
   }
 }
 ```
 
-Plugin: take `result.audioUrls[0]`, strip leading `/` if needed, and request `GET <base>/audio/aceforge_export.wav` to get the WAV bytes.
+Plugin: take `result.audioUrls[0]` (e.g. `/audio/dirt_cheap_test.wav`), strip leading `/` if needed, and request `GET <base>/audio/<filename>` to get the WAV bytes.
+
+**Audio format returned:** RIFF WAVE, Microsoft PCM, 16 bit, stereo, **48000 Hz**. Plugin decodes with JUCE and resamples to host rate in `pushSamplesToPlayback`.
 
 ---
 

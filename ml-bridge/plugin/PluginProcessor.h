@@ -51,7 +51,7 @@ public:
     void handleAsyncUpdate() override;
 
     // Generation (call from UI or elsewhere; runs on background thread)
-    void startGeneration(const juce::String& prompt, int durationSeconds = 10);
+    void startGeneration(const juce::String& prompt, int durationSeconds = 10, int inferenceSteps = 15);
     void setBaseUrl(const juce::String& url);
 
     State getState() const { return state_.load(); }
@@ -60,7 +60,7 @@ public:
     bool isConnected() const { return connected_; }
 
 private:
-    void runGenerationThread(juce::String prompt, int durationSec);
+    void runGenerationThread(juce::String prompt, int durationSec, int inferenceSteps);
     void pushSamplesToPlayback(const float* interleaved, int numFrames, int sourceChannels, double sourceSampleRate);
 
     std::unique_ptr<aceforge::AceForgeClient> client_;
@@ -76,7 +76,11 @@ private:
     std::vector<float> playbackBuffer_;
     std::atomic<bool> playbackBufferReady_{ false };
 
-    double sampleRate_ = 44100.0;
+    std::atomic<double> sampleRate_{ 44100.0 };
+
+    // Pending WAV bytes from background thread; decoded on message thread (JUCE not thread-safe)
+    juce::CriticalSection pendingWavLock_;
+    std::vector<uint8_t> pendingWavBytes_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AceForgeBridgeAudioProcessor)
 };

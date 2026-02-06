@@ -5,10 +5,11 @@ AceForgeBridgeAudioProcessorEditor::AceForgeBridgeAudioProcessorEditor(
     AceForgeBridgeAudioProcessor& p)
     : AudioProcessorEditor(&p), processorRef(p)
 {
-    setSize(420, 320);
+    setSize(460, 340);
 
-    connectionLabel.setText("Connection: checking…", juce::dontSendNotification);
+    connectionLabel.setText("Checking...", juce::dontSendNotification);
     connectionLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+    connectionLabel.setJustificationType(juce::Justification::left);
     addAndMakeVisible(connectionLabel);
 
     promptEditor.setMultiLine(false);
@@ -28,13 +29,23 @@ AceForgeBridgeAudioProcessorEditor::AceForgeBridgeAudioProcessorEditor(
     durationCombo.setSelectedId(10, juce::dontSendNotification);
     addAndMakeVisible(durationCombo);
 
+    qualityLabel.setText("Quality:", juce::dontSendNotification);
+    qualityLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+    addAndMakeVisible(qualityLabel);
+
+    qualityCombo.addItem("Fast (15 steps)", 15);
+    qualityCombo.addItem("High (55 steps)", 55);
+    qualityCombo.setSelectedId(15, juce::dontSendNotification);
+    addAndMakeVisible(qualityCombo);
+
     generateButton.setButtonText("Generate");
     generateButton.onClick = [this] { startGeneration(); };
     addAndMakeVisible(generateButton);
 
-    statusLabel.setText("Idle – enter a prompt and click Generate.", juce::dontSendNotification);
+    statusLabel.setText("Idle - enter a prompt and click Generate.", juce::dontSendNotification);
     statusLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    statusLabel.setJustificationType(juce::Justification::centredLeft);
+    statusLabel.setJustificationType(juce::Justification::topLeft);
+    statusLabel.setMinimumHorizontalScale(1.0f);
     addAndMakeVisible(statusLabel);
 
     startTimerHz(4);
@@ -58,7 +69,7 @@ void AceForgeBridgeAudioProcessorEditor::updateStatusFromProcessor()
     else if (state == AceForgeBridgeAudioProcessor::State::Failed)
         connectionLabel.setText("AceForge: error (see status)", juce::dontSendNotification);
     else
-        connectionLabel.setText("AceForge: not connected – start AceForge?", juce::dontSendNotification);
+        connectionLabel.setText("AceForge: not connected - start AceForge?", juce::dontSendNotification);
 
     statusLabel.setText(processorRef.getStatusText(), juce::dontSendNotification);
     if (state == AceForgeBridgeAudioProcessor::State::Failed)
@@ -75,32 +86,40 @@ void AceForgeBridgeAudioProcessorEditor::updateStatusFromProcessor()
 void AceForgeBridgeAudioProcessorEditor::startGeneration()
 {
     const int durationSec = durationCombo.getSelectedId();
-    processorRef.startGeneration(promptEditor.getText(), durationSec > 0 ? durationSec : 10);
+    const int steps = qualityCombo.getSelectedId();
+    processorRef.startGeneration(promptEditor.getText(), durationSec > 0 ? durationSec : 10, steps > 0 ? steps : 15);
 }
 
 void AceForgeBridgeAudioProcessorEditor::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff1a1a2e));
     g.setColour(juce::Colours::white);
-    g.setFont(16.0f);
-    g.drawText("AceForge Bridge", 10, 8, 200, 22, juce::Justification::left);
+    g.setFont(18.0f);
+    auto r = getLocalBounds().reduced(12);
+    g.drawText("AceForge Bridge", r.getX(), r.getY(), 220, 26, juce::Justification::left);
 }
 
 void AceForgeBridgeAudioProcessorEditor::resized()
 {
-    auto r = getLocalBounds().reduced(12);
-    connectionLabel.setBounds(r.removeFromTop(22));
-    r.removeFromTop(8);
+    const int pad = 12;
+    auto r = getLocalBounds().reduced(pad);
+    r.removeFromTop(26);
+
+    connectionLabel.setBounds(r.getX(), r.getY(), r.getWidth(), 22);
+    r.removeFromTop(22);
+    r.removeFromTop(6);
 
     auto row = r.removeFromTop(24);
-    promptEditor.setBounds(row.removeFromLeft(r.getWidth() - 8));
+    promptEditor.setBounds(row.getX(), row.getY(), row.getWidth(), 24);
     r.removeFromTop(6);
 
     row = r.removeFromTop(24);
-    durationLabel.setBounds(row.removeFromLeft(90));
-    durationCombo.setBounds(row.removeFromLeft(80));
-    generateButton.setBounds(row.removeFromLeft(100).reduced(2));
+    durationLabel.setBounds(row.getX(), row.getY(), 80, 22);
+    durationCombo.setBounds(row.getX() + 82, row.getY(), 56, 22);
+    qualityLabel.setBounds(row.getX() + 146, row.getY(), 52, 22);
+    qualityCombo.setBounds(row.getX() + 200, row.getY(), 120, 22);
+    generateButton.setBounds(row.getX() + 324, row.getY(), 100, 22);
     r.removeFromTop(8);
 
-    statusLabel.setBounds(r.removeFromTop(60));
+    statusLabel.setBounds(r.getX(), r.getY(), r.getWidth(), r.getHeight());
 }

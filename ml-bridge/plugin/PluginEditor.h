@@ -22,6 +22,8 @@ private:
     juce::TextEditor promptEditor;
     juce::Label durationLabel;
     juce::ComboBox durationCombo;
+    juce::Label qualityLabel;
+    juce::ComboBox qualityCombo;
     juce::TextButton generateButton;
     juce::Label statusLabel;
 

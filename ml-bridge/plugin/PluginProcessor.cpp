@@ -37,11 +37,14 @@ AceForgeBridgeAudioProcessor::AceForgeBridgeAudioProcessor()
     playbackBuffer_.resize(kPlaybackFifoFrames * 2, 0.0f);
     {
         juce::ScopedLock l(statusLock_);
-        statusText_ = "Idle – open the plugin and click Generate (10s).";
+        statusText_ = "Idle - open the plugin and click Generate (10s).";
     }
 }
 
-AceForgeBridgeAudioProcessor::~AceForgeBridgeAudioProcessor() {}
+AceForgeBridgeAudioProcessor::~AceForgeBridgeAudioProcessor()
+{
+    cancelPendingUpdate();
+}
 
 void AceForgeBridgeAudioProcessor::setBaseUrl(const juce::String& url)
 {
@@ -53,23 +56,29 @@ void AceForgeBridgeAudioProcessor::setBaseUrl(const juce::String& url)
 void AceForgeBridgeAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     juce::ignoreUnused(samplesPerBlock);
-    sampleRate_ = sampleRate;
+    sampleRate_.store(sampleRate);
 }
 
 void AceForgeBridgeAudioProcessor::releaseResources() {}
 
-void AceForgeBridgeAudioProcessor::startGeneration(const juce::String& prompt, int durationSeconds)
+void AceForgeBridgeAudioProcessor::startGeneration(const juce::String& prompt, int durationSeconds, int inferenceSteps)
 {
-    if (state_.load() == State::Submitting || state_.load() == State::Queued ||
-        state_.load() == State::Running)
+    // Only one generation at a time: atomically transition to Submitting only from a non-busy state,
+    // so double-clicks or rapid UI updates don't spawn multiple threads (each would POST /api/generate).
+    State expected = state_.load();
+    while (expected == State::Submitting || expected == State::Queued || expected == State::Running)
         return;
-    state_.store(State::Submitting);
+    while (!state_.compare_exchange_weak(expected, State::Submitting))
+    {
+        if (expected == State::Submitting || expected == State::Queued || expected == State::Running)
+            return;
+    }
     triggerAsyncUpdate();
-    std::thread t(&AceForgeBridgeAudioProcessor::runGenerationThread, this, prompt, durationSeconds);
+    std::thread t(&AceForgeBridgeAudioProcessor::runGenerationThread, this, prompt, durationSeconds, inferenceSteps);
     t.detach();
 }
 
-void AceForgeBridgeAudioProcessor::runGenerationThread(juce::String prompt, int durationSec)
+void AceForgeBridgeAudioProcessor::runGenerationThread(juce::String prompt, int durationSec, int inferenceSteps)
 {
     if (!client_)
     {
@@ -89,7 +98,7 @@ void AceForgeBridgeAudioProcessor::runGenerationThread(juce::String prompt, int 
         connected_.store(false);
         {
             juce::ScopedLock l(statusLock_);
-            lastError_ = "Cannot reach AceForge at " + baseUrl_ + " – is it running?";
+            lastError_ = "Cannot reach AceForge at " + baseUrl_ + " - is it running?";
             statusText_ = lastError_;
         }
         triggerAsyncUpdate();
@@ -100,6 +109,7 @@ void AceForgeBridgeAudioProcessor::runGenerationThread(juce::String prompt, int 
     aceforge::GenerateParams params;
     params.songDescription = prompt.toStdString();
     params.durationSeconds = durationSec <= 0 ? 10 : durationSec;
+    params.inferenceSteps = inferenceSteps <= 0 ? 15 : (inferenceSteps > 100 ? 55 : inferenceSteps);
     params.instrumental = true;
     params.lyrics = "[inst]";
     params.taskType = "text2music";
@@ -143,35 +153,10 @@ void AceForgeBridgeAudioProcessor::runGenerationThread(juce::String prompt, int 
                 triggerAsyncUpdate();
                 return;
             }
-            juce::AudioFormatManager fm;
-            fm.registerFormat(new juce::WavAudioFormat(), true);
-            auto mis = std::make_unique<juce::MemoryInputStream>(wavBytes.data(), static_cast<size_t>(wavBytes.size()), false);
-            std::unique_ptr<juce::AudioFormatReader> reader(fm.createReaderFor(std::move(mis)));
-            if (!reader)
+            // Decode and push on message thread (JUCE AudioFormatManager/Reader not safe from background thread)
             {
-                state_.store(State::Failed);
-                juce::ScopedLock l(statusLock_);
-                lastError_ = "Failed to decode WAV";
-                triggerAsyncUpdate();
-                return;
-            }
-            const double fileSampleRate = reader->sampleRate;
-            const int numCh = static_cast<int>(reader->numChannels);
-            const int numSamples = static_cast<int>(reader->lengthInSamples);
-            juce::AudioBuffer<float> fileBuffer(numCh, numSamples);
-            reader->read(&fileBuffer, 0, numSamples, 0, true, true);
-            std::vector<float> interleaved(static_cast<size_t>(numSamples) * 2u);
-            for (int i = 0; i < numSamples; ++i)
-            {
-                interleaved[static_cast<size_t>(i) * 2u] = numCh > 0 ? fileBuffer.getSample(0, i) : 0.0f;
-                interleaved[static_cast<size_t>(i) * 2u + 1u] = numCh > 1 ? fileBuffer.getSample(1, i) : interleaved[static_cast<size_t>(i) * 2u];
-            }
-            pushSamplesToPlayback(interleaved.data(), numSamples, 2, fileSampleRate);
-            playbackBufferReady_.store(true);
-            state_.store(State::Succeeded);
-            {
-                juce::ScopedLock l(statusLock_);
-                statusText_ = "Generated " + juce::String(durationSec) + "s – playing.";
+                juce::ScopedLock l(pendingWavLock_);
+                pendingWavBytes_ = std::move(wavBytes);
             }
             triggerAsyncUpdate();
             return;
@@ -202,20 +187,23 @@ void AceForgeBridgeAudioProcessor::pushSamplesToPlayback(const float* interleave
 {
     if (numFrames <= 0 || interleaved == nullptr)
         return;
-    const double ratio = sourceSampleRate > 0.0 ? sampleRate_ / sourceSampleRate : 1.0;
-    const int outFrames = static_cast<int>(std::round(numFrames * ratio));
+    playbackFifo_.reset();
+    const double hostRate = sampleRate_.load(std::memory_order_relaxed);
+    const double ratio = sourceSampleRate > 0.0 ? hostRate / sourceSampleRate : 1.0;
+    const int outFrames = static_cast<int>(std::round(static_cast<double>(numFrames) * ratio));
     if (outFrames <= 0)
         return;
 
     int start1, block1, start2, block2;
     playbackFifo_.prepareToWrite(outFrames, start1, block1, start2, block2);
 
-    auto writeFrames = [&](int start, int count)
+    auto writeFrames = [&](int fifoStart, int count, int outputBaseIndex)
     {
         for (int i = 0; i < count; ++i)
         {
-            const double srcIdx = (double)i / ratio;
-            const int i0 = std::min(static_cast<int>(srcIdx), numFrames - 1);
+            const int outIdx = outputBaseIndex + i;
+            const double srcIdx = ratio > 0.0 ? (double)outIdx / ratio : (double)outIdx;
+            const int i0 = std::min(std::max(0, static_cast<int>(srcIdx)), numFrames - 1);
             const int i1 = std::min(i0 + 1, numFrames - 1);
             const float t = static_cast<float>(srcIdx - std::floor(srcIdx));
             float l = 0.0f, r = 0.0f;
@@ -226,7 +214,7 @@ void AceForgeBridgeAudioProcessor::pushSamplesToPlayback(const float* interleave
                         ? interleaved[i0 * sourceChannels + 1] * (1.0f - t) + interleaved[i1 * sourceChannels + 1] * t
                         : l;
             }
-            const size_t base = static_cast<size_t>(start + i) * 2u;
+            const size_t base = static_cast<size_t>(fifoStart + i) * 2u;
             if (base + 1 < playbackBuffer_.size())
             {
                 playbackBuffer_[base] = l;
@@ -234,8 +222,8 @@ void AceForgeBridgeAudioProcessor::pushSamplesToPlayback(const float* interleave
             }
         }
     };
-    writeFrames(start1, block1);
-    writeFrames(start2, block2);
+    writeFrames(start1, block1, 0);
+    writeFrames(start2, block2, block1);
     playbackFifo_.finishedWrite(block1 + block2);
 }
 
@@ -293,7 +281,77 @@ juce::String AceForgeBridgeAudioProcessor::getLastError() const
 
 void AceForgeBridgeAudioProcessor::handleAsyncUpdate()
 {
-    // Notify listeners / editor can poll; optional repaint trigger via listener
+    std::vector<uint8_t> wavBytes;
+    {
+        juce::ScopedLock l(pendingWavLock_);
+        if (pendingWavBytes_.empty())
+            return;
+        wavBytes = std::move(pendingWavBytes_);
+        pendingWavBytes_.clear();
+    }
+
+    try
+    {
+        juce::AudioFormatManager fm;
+        fm.registerFormat(new juce::WavAudioFormat(), true);
+        auto mis = std::make_unique<juce::MemoryInputStream>(wavBytes.data(), wavBytes.size(), false);
+        std::unique_ptr<juce::AudioFormatReader> reader(fm.createReaderFor(std::move(mis)));
+        if (!reader)
+        {
+            state_.store(State::Failed);
+            juce::ScopedLock l(statusLock_);
+            lastError_ = "Failed to decode WAV";
+            statusText_ = lastError_;
+            return;
+        }
+        const double fileSampleRate = reader->sampleRate;
+        const int numCh = static_cast<int>(reader->numChannels);
+        const int numSamples = static_cast<int>(reader->lengthInSamples);
+        if (numSamples <= 0 || numCh <= 0)
+        {
+            state_.store(State::Failed);
+            juce::ScopedLock l(statusLock_);
+            lastError_ = "Invalid WAV (no samples)";
+            statusText_ = lastError_;
+            return;
+        }
+        juce::AudioBuffer<float> fileBuffer(numCh, numSamples);
+        if (!reader->read(&fileBuffer, 0, numSamples, 0, true, true))
+        {
+            state_.store(State::Failed);
+            juce::ScopedLock l(statusLock_);
+            lastError_ = "Failed to read WAV samples";
+            statusText_ = lastError_;
+            return;
+        }
+        std::vector<float> interleaved(static_cast<size_t>(numSamples) * 2u);
+        for (int i = 0; i < numSamples; ++i)
+        {
+            interleaved[static_cast<size_t>(i) * 2u] = numCh > 0 ? fileBuffer.getSample(0, i) : 0.0f;
+            interleaved[static_cast<size_t>(i) * 2u + 1u] = numCh > 1 ? fileBuffer.getSample(1, i) : interleaved[static_cast<size_t>(i) * 2u];
+        }
+        pushSamplesToPlayback(interleaved.data(), numSamples, 2, fileSampleRate);
+        playbackBufferReady_.store(true);
+        state_.store(State::Succeeded);
+        {
+            juce::ScopedLock l(statusLock_);
+            statusText_ = "Generated - playing.";
+        }
+    }
+    catch (const std::exception& e)
+    {
+        state_.store(State::Failed);
+        juce::ScopedLock l(statusLock_);
+        lastError_ = juce::String("Decode error: ") + e.what();
+        statusText_ = lastError_;
+    }
+    catch (...)
+    {
+        state_.store(State::Failed);
+        juce::ScopedLock l(statusLock_);
+        lastError_ = "Decode error (unknown)";
+        statusText_ = lastError_;
+    }
 }
 
 const juce::String AceForgeBridgeAudioProcessor::getName() const { return JucePlugin_Name; }

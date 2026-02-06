@@ -113,7 +113,47 @@ We are **not** copying: ARA, stem splitting, voice cloning, or the full ACE Stud
 
 ---
 
-## 7. Out of scope for v1
+## 7. JUCE audio output: processBlock and “timeline” vs realtime
+
+### How JUCE plugins output audio
+
+- **All output goes through `processBlock()`.** The DAW calls it every time it needs a block of audio (realtime or during offline render). There is no separate “write to timeline” API in JUCE or VST/AU. To “return audio to the DAW”, we fill the output buffers in `processBlock`; the host then either plays that buffer or records it (e.g. when the user records the track or freezes it).
+- **Standard pattern:** Synths and generators allocate or use an internal buffer (or FIFO). When new content is ready (e.g. from a background thread), they hand it off to the audio thread (e.g. double-buffer or lock-free FIFO). In `processBlock` they read from that buffer into `buffer` (the output). Our design follows this: AceForge WAV → decode on message thread → push into double-buffer → audio thread copies into FIFO and reads into `processBlock` output.
+
+### “Returning audio chunks into the timeline”
+
+- **Realtime playback:** What we do now is correct for “play generated audio on the track”: the DAW calls `processBlock`, we write samples into the buffer, and the user hears (and can record) that output. No design change needed for that.
+- **Timeline as “clip”:** If the goal is “drop a generated clip onto the timeline” (like a frozen region), that is **host-specific**. DAWs do not expose a standard way for a plugin to “insert a region here”. Options:
+  - **Freeze / Bounce:** User freezes or bounces the track; the host runs the plugin and records our `processBlock` output to a new clip/file. No plugin API change.
+  - **Export from plugin:** We could add “Export WAV” in the UI, save to a file, and the user drags it into the timeline. That’s a UI feature, not a different output model.
+- So the current “processing” design (output in realtime from `processBlock`) is the right one for DAW playback and for freeze/bounce. “Chunks into the timeline” is achieved by the host recording our output or the user importing an exported file.
+
+### JUCE examples that generate audio blocks
+
+- **Official:** [JUCE Plugin Examples](https://juce.com/learn/tutorials/tutorial_plugin_examples) — e.g. **AudioPluginDemo** and **Multi-Out Synth** show `processBlock` filling the output buffer (and optional multi-bus layout).
+- **Tutorials:** [Processing audio input](https://juce.com/learn/tutorials/tutorial_processing_audio_input), [Simple synth / noise](https://juce.com/learn/tutorials/tutorial_simple_synth_noise) — same idea: write into the `AudioBuffer` in `processBlock`.
+- **FIFO:** [AbstractFifo](https://docs.juce.com/master/classAbstractFifo.html) is single-reader, single-writer; only the audio thread should call `reset()`. We use a double-buffer from message thread → audio thread, then the audio thread alone writes into the FIFO and reads from it in `processBlock`.
+
+### Crash and error visibility
+
+- **Double-buffer handoff:** The message thread must not overwrite the buffer the audio thread is reading. We use two buffers and alternate (`pendingPlaybackBuffer_[0]` / `[1]`, `nextWriteIndex_`); the message thread always writes to the “other” buffer.
+- **Logging:** Errors are written to `getStatusText()` / `getLastError()` and also to **JUCE Logger** and **~/Library/Logs/AceForgeBridge.log** (and stderr in Debug). If the host crashes, check that log file and the DAW’s crash report (e.g. Console.app on macOS).
+
+---
+
+### Library + drag into DAW (no "realtime-only" lock-in)
+
+We are **not** bound to realtime DSP-only. The plugin also acts as a **library** of generations and lets users **drag audio into the DAW** via the OS drag-and-drop API:
+
+- **Library:** On each successful generation we save a WAV to `~/Library/Application Support/AceForgeBridge/Generations/` (e.g. `gen_YYYYMMDD_HHMMSS.wav`) and keep feeding the realtime playback FIFO for preview.
+- **UI:** A "Library" list in the editor shows current and previous generations (all `.wav` files in that folder, newest first).
+- **Drag into DAW:** JUCE's **`DragAndDropContainer::performExternalDragDropOfFiles(...)`** starts a native OS file drag. When the user drags a library row, we pass the WAV path; the user can drop it onto the DAW timeline (or anywhere). The DAW typically creates a clip from the dropped file. No VST/AU "timeline insert" API is required.
+
+So we support both **realtime playback** (optional preview) and **drag-from-library into the DAW** for placing generated audio on the timeline.
+
+---
+
+## 8. Out of scope for v1
 
 - ARA, MIDI input, stem splitting, voice cloning.
 - Browsing AceForge song list or history in the plugin (can add later).

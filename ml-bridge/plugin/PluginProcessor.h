@@ -6,6 +6,7 @@
 #include "AceForgeClient/AceForgeClient.hpp"
 #include <atomic>
 #include <memory>
+#include <vector>
 
 class AceForgeBridgeAudioProcessor : public juce::AudioProcessor,
                                      public juce::AsyncUpdater
@@ -59,6 +60,17 @@ public:
     juce::String getLastError() const;
     bool isConnected() const { return connected_; }
 
+    // Library of saved generations (on disk) for drag-into-DAW
+    struct LibraryEntry
+    {
+        juce::File file;
+        juce::String prompt;
+        juce::Time time;
+    };
+    juce::File getLibraryDirectory() const;
+    std::vector<LibraryEntry> getLibraryEntries() const;
+    void addToLibrary(const juce::File& wavFile, const juce::String& prompt);
+
 private:
     void runGenerationThread(juce::String prompt, int durationSec, int inferenceSteps);
     void pushSamplesToPlayback(const float* interleaved, int numFrames, int sourceChannels, double sourceSampleRate);
@@ -76,9 +88,11 @@ private:
     std::vector<float> playbackBuffer_;
     std::atomic<bool> playbackBufferReady_{ false };
 
-    // New playback data is handed off via pending buffer; only the audio thread calls fifo reset (AbstractFifo is not safe to reset from another thread).
-    std::vector<float> pendingPlaybackBuffer_;
+    // Double-buffer handoff: message thread writes to one buffer, audio thread reads from the other. Avoids race where message thread resize() invalidates pointer audio thread is reading.
+    std::vector<float> pendingPlaybackBuffer_[2];
     std::atomic<int> pendingPlaybackFrames_{ 0 };
+    std::atomic<int> pendingPlaybackBufferIndex_{ 0 }; // which buffer has new data (0 or 1)
+    std::atomic<int> nextWriteIndex_{ 0 };           // which buffer message thread will write next
     std::atomic<bool> pendingPlaybackReady_{ false };
 
     std::atomic<double> sampleRate_{ 44100.0 };
@@ -86,6 +100,8 @@ private:
     // Pending WAV bytes from background thread; decoded on message thread (JUCE not thread-safe)
     juce::CriticalSection pendingWavLock_;
     std::vector<uint8_t> pendingWavBytes_;
+    juce::String pendingPrompt_;
+    int pendingDurationSec_{ 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AceForgeBridgeAudioProcessor)
 };

@@ -1,11 +1,67 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+// --- LibraryListModel ---
+int LibraryListModel::getNumRows()
+{
+    return static_cast<int>(processor.getLibraryEntries().size());
+}
+
+void LibraryListModel::paintListBoxItem(int rowNumber, juce::Graphics& g, int width, int height, bool rowIsSelected)
+{
+    auto entries = processor.getLibraryEntries();
+    if (rowNumber < 0 || rowNumber >= static_cast<int>(entries.size()))
+        return;
+    const auto& e = entries[static_cast<size_t>(rowNumber)];
+    if (rowIsSelected)
+        g.fillAll(juce::Colour(0xff2a2a4e));
+    g.setColour(juce::Colours::white);
+    g.setFont(14.0f);
+    g.drawText(e.file.getFileName(), 6, 0, width - 12, height, juce::Justification::centredLeft);
+    g.setColour(juce::Colours::lightgrey);
+    g.setFont(11.0f);
+    g.drawText(e.time.formatted("%Y-%m-%d %H:%M"), 6, 0, width - 12, height, juce::Justification::centredRight);
+}
+
+// --- LibraryListBox ---
+LibraryListBox::LibraryListBox(AceForgeBridgeAudioProcessor& p, LibraryListModel& model)
+    : ListBox("Library", &model), processorRef(p)
+{
+    setRowHeight(28);
+    setOutlineThickness(0);
+}
+
+void LibraryListBox::mouseDrag(const juce::MouseEvent& e)
+{
+    ListBox::mouseDrag(e);
+    if (dragStarted_)
+        return;
+    if (e.getDistanceFromDragStart() < 8)
+        return;
+    int row = getRowContainingPoint(e.x, e.y);
+    auto entries = processorRef.getLibraryEntries();
+    if (row < 0 || row >= static_cast<int>(entries.size()))
+        return;
+    juce::String path = entries[static_cast<size_t>(row)].file.getFullPathName();
+    if (path.isEmpty())
+        return;
+    auto* container = juce::DragAndDropContainer::findParentDragContainerFor(this);
+    if (container && container->performExternalDragDropOfFiles(juce::StringArray(path), false, this))
+        dragStarted_ = true;
+}
+
+void LibraryListBox::mouseUp(const juce::MouseEvent& e)
+{
+    dragStarted_ = false;
+    ListBox::mouseUp(e);
+}
+
+// --- Editor ---
 AceForgeBridgeAudioProcessorEditor::AceForgeBridgeAudioProcessorEditor(
     AceForgeBridgeAudioProcessor& p)
-    : AudioProcessorEditor(&p), processorRef(p)
+    : AudioProcessorEditor(&p), processorRef(p), libraryListModel(p), libraryList(p, libraryListModel)
 {
-    setSize(460, 340);
+    setSize(460, 420);
 
     connectionLabel.setText("Checking...", juce::dontSendNotification);
     connectionLabel.setColour(juce::Label::textColourId, juce::Colours::white);
@@ -48,6 +104,11 @@ AceForgeBridgeAudioProcessorEditor::AceForgeBridgeAudioProcessorEditor(
     statusLabel.setMinimumHorizontalScale(1.0f);
     addAndMakeVisible(statusLabel);
 
+    libraryLabel.setText("Library (drag into DAW):", juce::dontSendNotification);
+    libraryLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+    addAndMakeVisible(libraryLabel);
+    addAndMakeVisible(libraryList);
+
     startTimerHz(4);
 }
 
@@ -59,6 +120,7 @@ AceForgeBridgeAudioProcessorEditor::~AceForgeBridgeAudioProcessorEditor()
 void AceForgeBridgeAudioProcessorEditor::timerCallback()
 {
     updateStatusFromProcessor();
+    libraryList.updateContent();
 }
 
 void AceForgeBridgeAudioProcessorEditor::updateStatusFromProcessor()
@@ -121,5 +183,10 @@ void AceForgeBridgeAudioProcessorEditor::resized()
     generateButton.setBounds(row.getX() + 324, row.getY(), 100, 22);
     r.removeFromTop(8);
 
-    statusLabel.setBounds(r.getX(), r.getY(), r.getWidth(), r.getHeight());
+    statusLabel.setBounds(r.getX(), r.getY(), r.getWidth(), 44);
+    r.removeFromTop(44);
+
+    libraryLabel.setBounds(r.getX(), r.getY(), r.getWidth(), 20);
+    r.removeFromTop(20);
+    libraryList.setBounds(r.getX(), r.getY(), r.getWidth(), r.getHeight());
 }

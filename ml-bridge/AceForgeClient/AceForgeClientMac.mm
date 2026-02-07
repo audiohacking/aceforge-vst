@@ -40,22 +40,27 @@ void AceForgeClient::setBaseUrl(const std::string& url) {
 
 std::string AceForgeClient::getBaseUrl() const { return base_; }
 
-static NSData* performRequest(NSURLRequest* request, NSHTTPURLResponse** outResponse, NSError** outError) {
+// Perform request and copy response body into a __block buffer so we never use NSData* after the block.
+static void performRequestCopyBody(NSURLRequest* request, std::string* outBody, NSHTTPURLResponse** outResponse, NSError** outError) {
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-    __block NSData* resultData = nil;
+    __block std::string body;
     __block NSHTTPURLResponse* resultResp = nil;
     __block NSError* resultErr = nil;
     NSURLSession* session = [NSURLSession sharedSession];
     [[session dataTaskWithRequest:request completionHandler:^(NSData* data, NSURLResponse* response, NSError* error) {
-        resultData = data;
         resultResp = (NSHTTPURLResponse*)response;
         resultErr = error;
+        if (data && [data length] > 0) {
+            NSData* dataCopy = [data copy];
+            if (dataCopy)
+                body.assign((const char*)[dataCopy bytes], (size_t)[dataCopy length]);
+        }
         dispatch_semaphore_signal(sem);
     }] resume];
     dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
     if (outResponse) *outResponse = resultResp;
     if (outError) *outError = resultErr;
-    return resultData;
+    if (outBody) *outBody = std::move(body);
 }
 
 std::string AceForgeClient::get(const std::string& path) {
@@ -66,17 +71,17 @@ std::string AceForgeClient::get(const std::string& path) {
     NSURLRequest* req = [NSURLRequest requestWithURL:url];
     NSError* err = nil;
     NSHTTPURLResponse* resp = nil;
-    NSData* data = performRequest(req, &resp, &err);
+    std::string body;
+    performRequestCopyBody(req, &body, &resp, &err);
     if (err) {
         lastError_ = nsstringToStd([err localizedDescription]);
         return {};
     }
-    if (resp.statusCode >= 400) {
+    if (resp && resp.statusCode >= 400) {
         lastError_ = "HTTP " + std::to_string((int)resp.statusCode);
         return {};
     }
-    if (!data || data.length == 0) return {};
-    return std::string((const char*)data.bytes, (size_t)data.length);
+    return body;
 }
 
 std::string AceForgeClient::post(const std::string& path, const std::string& jsonBody) {
@@ -90,17 +95,17 @@ std::string AceForgeClient::post(const std::string& path, const std::string& jso
     [req setHTTPBody:[NSData dataWithBytes:jsonBody.data() length:jsonBody.size()]];
     NSError* err = nil;
     NSHTTPURLResponse* resp = nil;
-    NSData* data = performRequest(req, &resp, &err);
+    std::string body;
+    performRequestCopyBody(req, &body, &resp, &err);
     if (err) {
         lastError_ = nsstringToStd([err localizedDescription]);
         return {};
     }
-    if (resp.statusCode >= 400) {
+    if (resp && resp.statusCode >= 400) {
         lastError_ = "HTTP " + std::to_string((int)resp.statusCode);
         return {};
     }
-    if (!data || data.length == 0) return {};
-    return std::string((const char*)data.bytes, (size_t)data.length);
+    return body;
 }
 
 bool AceForgeClient::healthCheck() {
@@ -210,24 +215,37 @@ ProgressInfo AceForgeClient::getProgress() {
 std::vector<uint8_t> AceForgeClient::fetchAudio(const std::string& path) {
     lastError_.clear();
     std::string p = trimPath(path);
-    // result.audioUrls[0] is e.g. "/audio/filename.wav" or "/audio/refs/filename.wav"
     std::string urlStr = base_ + "/" + p;
     NSURL* url = [NSURL URLWithString:stdToNSString(urlStr)];
     if (!url) { lastError_ = "Invalid path"; return {}; }
     NSURLRequest* req = [NSURLRequest requestWithURL:url];
-    NSError* err = nil;
-    NSHTTPURLResponse* resp = nil;
-    NSData* data = performRequest(req, &resp, &err);
-    if (err || !data) {
-        if (err) lastError_ = nsstringToStd([err localizedDescription]);
+    __block NSError* err = nil;
+    __block NSHTTPURLResponse* resp = nil;
+    __block std::vector<uint8_t> out;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    NSURLSession* session = [NSURLSession sharedSession];
+    [[session dataTaskWithRequest:req completionHandler:^(NSData* data, NSURLResponse* response, NSError* error) {
+        resp = (NSHTTPURLResponse*)response;
+        err = error;
+        if (data && [data length] > 0) {
+            NSData* dataCopy = [data copy];  // Own the bytes; avoid using session's data after block
+            if (dataCopy) {
+                const NSUInteger len = [dataCopy length];
+                out.resize((size_t)len);
+                [dataCopy getBytes:out.data() length:len];
+            }
+        }
+        dispatch_semaphore_signal(sem);
+    }] resume];
+    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+    if (err) {
+        lastError_ = nsstringToStd([err localizedDescription]);
         return {};
     }
-    if (resp.statusCode >= 400) {
+    if (resp && resp.statusCode >= 400) {
         lastError_ = "HTTP " + std::to_string((int)resp.statusCode);
         return {};
     }
-    std::vector<uint8_t> out((size_t)data.length);
-    memcpy(out.data(), data.bytes, data.length);
     return out;
 }
 

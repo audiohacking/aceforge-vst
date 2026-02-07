@@ -2,6 +2,7 @@
 #include "PluginEditor.h"
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <iostream>
 #include <vector>
 #include <thread>
@@ -9,7 +10,7 @@
 
 namespace
 {
-void logErrorToFileAndStderr(const juce::String& message)
+void writeToLogFile(const juce::String& message)
 {
     juce::Logger::writeToLog("[AceForgeBridge] " + message);
 #if JUCE_DEBUG
@@ -20,9 +21,25 @@ void logErrorToFileAndStderr(const juce::String& message)
     {
         juce::File logFile = logDir.getChildFile("AceForgeBridge.log");
         juce::String line = juce::Time::getCurrentTime().formatted("%Y-%m-%d %H:%M:%S") + " " + message + "\n";
-        if (!logFile.appendData(line.toRawUTF8(), line.getNumBytesAsUTF8()))
-        { /* ignore */ }
+        std::string path = logFile.getFullPathName().toStdString();
+        std::ofstream f(path, std::ios::app);
+        if (f)
+        {
+            f << line.toRawUTF8();
+            f.flush();
+        }
     }
+}
+
+void logErrorToFileAndStderr(const juce::String& message)
+{
+    writeToLogFile("ERROR: " + message);
+}
+
+// Trace steps so after a crash you can open ~/Library/Logs/AceForgeBridge.log and see last step reached
+void logTrace(const juce::String& message)
+{
+    writeToLogFile("TRACE: " + message);
 }
 
 const char* stateToString(AceForgeBridgeAudioProcessor::State s)
@@ -211,17 +228,22 @@ void AceForgeBridgeAudioProcessor::runGenerationThread(juce::String prompt, int 
 void AceForgeBridgeAudioProcessor::pushSamplesToPlayback(const float* interleaved, int numFrames,
                                                          int sourceChannels, double sourceSampleRate)
 {
+    logTrace("pushSamplesToPlayback: numFrames=" + juce::String(numFrames) + " ch=" + juce::String(sourceChannels) + " rate=" + juce::String(sourceSampleRate));
     if (numFrames <= 0 || interleaved == nullptr)
         return;
     const double hostRate = sampleRate_.load(std::memory_order_relaxed);
     const double ratio = sourceSampleRate > 0.0 ? hostRate / sourceSampleRate : 1.0;
     const int outFrames = static_cast<int>(std::round(static_cast<double>(numFrames) * ratio));
     if (outFrames <= 0 || outFrames > kPlaybackFifoFrames)
+    {
+        logTrace("pushSamplesToPlayback: skipped (outFrames=" + juce::String(outFrames) + ")");
         return;
+    }
 
     // Write into the buffer the audio thread is not reading (alternate 0/1)
     const int writeIdx = nextWriteIndex_.load(std::memory_order_relaxed);
     std::vector<float>& outBuf = pendingPlaybackBuffer_[writeIdx];
+    logTrace("pushSamplesToPlayback: resizing buffer to " + juce::String(outFrames * 2) + " floats");
     outBuf.resize(static_cast<size_t>(outFrames) * 2u);
     float* out = outBuf.data();
     for (int i = 0; i < outFrames; ++i)
@@ -245,6 +267,7 @@ void AceForgeBridgeAudioProcessor::pushSamplesToPlayback(const float* interleave
     pendingPlaybackBufferIndex_.store(writeIdx, std::memory_order_release);
     pendingPlaybackReady_.store(true, std::memory_order_release);
     nextWriteIndex_.store(1 - writeIdx, std::memory_order_release);
+    logTrace("pushSamplesToPlayback: done");
 }
 
 void AceForgeBridgeAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
@@ -356,6 +379,7 @@ void AceForgeBridgeAudioProcessor::addToLibrary(const juce::File& wavFile, const
 
 void AceForgeBridgeAudioProcessor::handleAsyncUpdate()
 {
+    logTrace("handleAsyncUpdate: start");
     std::vector<uint8_t> wavBytes;
     juce::String promptForLibrary;
     {
@@ -366,12 +390,15 @@ void AceForgeBridgeAudioProcessor::handleAsyncUpdate()
         pendingWavBytes_.clear();
         promptForLibrary = pendingPrompt_;
     }
+    logTrace("handleAsyncUpdate: got WAV bytes, size=" + juce::String(wavBytes.size()));
 
     try
     {
         juce::AudioFormatManager fm;
         fm.registerFormat(new juce::WavAudioFormat(), true);
+        logTrace("handleAsyncUpdate: creating MemoryInputStream");
         auto mis = std::make_unique<juce::MemoryInputStream>(wavBytes.data(), wavBytes.size(), false);
+        logTrace("handleAsyncUpdate: creating reader");
         std::unique_ptr<juce::AudioFormatReader> reader(fm.createReaderFor(std::move(mis)));
         if (!reader)
         {
@@ -385,6 +412,7 @@ void AceForgeBridgeAudioProcessor::handleAsyncUpdate()
         const double fileSampleRate = reader->sampleRate;
         const int numCh = static_cast<int>(reader->numChannels);
         const int numSamples = static_cast<int>(reader->lengthInSamples);
+        logTrace("handleAsyncUpdate: WAV info rate=" + juce::String(fileSampleRate) + " ch=" + juce::String(numCh) + " samples=" + juce::String(numSamples));
         if (numSamples <= 0 || numCh <= 0)
         {
             state_.store(State::Failed);
@@ -394,7 +422,9 @@ void AceForgeBridgeAudioProcessor::handleAsyncUpdate()
             logErrorToFileAndStderr(lastError_);
             return;
         }
+        logTrace("handleAsyncUpdate: allocating fileBuffer");
         juce::AudioBuffer<float> fileBuffer(numCh, numSamples);
+        logTrace("handleAsyncUpdate: reading samples");
         if (!reader->read(&fileBuffer, 0, numSamples, 0, true, true))
         {
             state_.store(State::Failed);
@@ -404,12 +434,14 @@ void AceForgeBridgeAudioProcessor::handleAsyncUpdate()
             logErrorToFileAndStderr(lastError_);
             return;
         }
+        logTrace("handleAsyncUpdate: building interleaved buffer");
         std::vector<float> interleaved(static_cast<size_t>(numSamples) * 2u);
         for (int i = 0; i < numSamples; ++i)
         {
             interleaved[static_cast<size_t>(i) * 2u] = numCh > 0 ? fileBuffer.getSample(0, i) : 0.0f;
             interleaved[static_cast<size_t>(i) * 2u + 1u] = numCh > 1 ? fileBuffer.getSample(1, i) : interleaved[static_cast<size_t>(i) * 2u];
         }
+        logTrace("handleAsyncUpdate: calling pushSamplesToPlayback");
         pushSamplesToPlayback(interleaved.data(), numSamples, 2, fileSampleRate);
         playbackBufferReady_.store(true);
         state_.store(State::Succeeded);
@@ -417,24 +449,38 @@ void AceForgeBridgeAudioProcessor::handleAsyncUpdate()
             juce::ScopedLock l(statusLock_);
             statusText_ = "Generated - playing.";
         }
-        // Save to library so user can drag into DAW
-        juce::File libDir = getLibraryDirectory();
-        juce::String baseName = "gen_" + juce::Time::getCurrentTime().formatted("%Y%m%d_%H%M%S");
-        juce::File wavFile = libDir.getChildFile(baseName + ".wav");
-        std::unique_ptr<juce::OutputStream> outStream = wavFile.createOutputStream();
-        if (outStream != nullptr)
+        logTrace("handleAsyncUpdate: playback updated, saving to library");
+        // Save to library so user can drag into DAW (own try so a file error doesn't lose playback)
+        try
         {
-            juce::WavAudioFormat wavFormat;
-            auto options = juce::AudioFormatWriterOptions{}
-                              .withSampleRate(fileSampleRate)
-                              .withNumChannels(numCh)
-                              .withBitsPerSample(24);
-            if (auto writer = wavFormat.createWriterFor(outStream, options))
+            juce::File libDir = getLibraryDirectory();
+            juce::String baseName = "gen_" + juce::Time::getCurrentTime().formatted("%Y%m%d_%H%M%S");
+            juce::File wavFile = libDir.getChildFile(baseName + ".wav");
+            std::unique_ptr<juce::OutputStream> outStream = wavFile.createOutputStream();
+            if (outStream != nullptr)
             {
-                if (writer->writeFromAudioSampleBuffer(fileBuffer, 0, numSamples))
-                    addToLibrary(wavFile, promptForLibrary);
+                juce::WavAudioFormat wavFormat;
+                auto options = juce::AudioFormatWriterOptions{}
+                                  .withSampleRate(fileSampleRate)
+                                  .withNumChannels(numCh)
+                                  .withBitsPerSample(24);
+                if (auto writer = wavFormat.createWriterFor(outStream, options))
+                {
+                    if (writer->writeFromAudioSampleBuffer(fileBuffer, 0, numSamples))
+                        addToLibrary(wavFile, promptForLibrary);
+                }
             }
+            logTrace("handleAsyncUpdate: library save done");
         }
+        catch (const std::exception& e)
+        {
+            logErrorToFileAndStderr("Library save failed: " + juce::String(e.what()));
+        }
+        catch (...)
+        {
+            logErrorToFileAndStderr("Library save failed (unknown)");
+        }
+        logTrace("handleAsyncUpdate: done");
     }
     catch (const std::exception& e)
     {

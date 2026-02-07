@@ -1,84 +1,89 @@
-# ML Bridge — AU/VST3 Plugin for AceForge
+# AceForge Bridge — AU/VST3 Plugin
 
-Scaffold and implementation for an **AU/VST3 plugin** that talks to the **AceForge API** (local HTTP, e.g. `http://127.0.0.1:5056`) for **generation and playback** — inspired by ACE Studio’s ACE Bridge 2.
+JUCE **AU** and **VST3** plugin that connects your DAW to the **AceForge API** (local HTTP) for text-to-music generation, playback, and adding generated audio into your project.
 
----
-
-## How ACE Bridge 2 Works (from reverse engineering)
-
-- **Binary:** Standalone; links **only system frameworks** (no libACEAudioSDK in the plugin).
-- **UI:** WebKit + Cocoa (likely a web view for the bridge UI).
-- **Audio:** CoreAudio, AudioToolbox, CoreMIDI.
-- **Connection:** Uses **`socket` / `connect`** (BSD TCP) — the plugin is a **network client** that talks to ACE Studio (or a local server) for audio/MIDI and control.
-- **Entitlements:** `network.client`, `temporary-exception.files.all.read-write` (sandbox exceptions for the plugin process).
-- **Formats:** VST3 (Instrument), AAX, AU (aumu, subtype `Brdg`, manufacturer `Acdt`).
-
-So the pattern is: **plugin in DAW ↔ TCP (or local IPC) ↔ host app (ACE Studio or your ML host).**
+- **Target:** macOS (Apple Silicon); build via CMake + JUCE.
+- **API:** `http://127.0.0.1:5056` (AceForge server must be running).
 
 ---
 
-## Architecture: Plugin ↔ AceForge (HTTP)
+## What the plugin does
 
-```
-┌─────────────────┐         ┌──────────────────────────┐         ┌─────────────────┐
-│  DAW            │  audio  │  AceForge Bridge plugin  │  HTTP   │  AceForge       │
-│  (Logic, etc.)  │ ◄──────  │  - POST /api/generate   │ ◄────► │  (127.0.0.1:    │
-│                 │          │  - GET status, /audio   │         │   5056)         │
-└─────────────────┘          │  - Playback buffer      │         │  ACE-Step, etc. │
-                              └──────────────────────────┘         └─────────────────┘
-```
-
-- **Plugin:** Instrument (aumu) or Effect (aufx). **Background thread:** AceForgeClient → POST `/api/generate`, poll `/api/generate/status/<jobId>`, GET `/audio/<filename>` → decode WAV → fill ring buffer. **Render callback:** read from ring buffer (or silence).
-- **AceForge:** Local server; REST API for generation, status, and audio serving. See **AceForge.md** and the AceForge API reference.
+1. **Generate** — Enter a prompt (e.g. “upbeat electronic beat, 10s”), choose duration (10–30 s) and quality (Fast / High), click **Generate**. The plugin talks to AceForge, polls until the job succeeds, then downloads the WAV.
+2. **Playback** — When generation succeeds, the audio plays once through the plugin output (so you can hear it and/or record the track in the DAW).
+3. **Library** — Each successful generation is saved as a WAV under **~/Library/Application Support/AceForgeBridge/Generations/** (e.g. `gen_20250206_143022.wav`). The plugin UI shows a **Library** list (newest first) with a **Refresh** button.
+4. **Add to DAW** — Select a library row, then:
+   - **Insert into DAW** (macOS): Opens the file with **Logic Pro** (a new project with that audio). You can then drag the audio from that project into your main project, or use **Reveal in Finder** and drag the file from Finder onto your timeline.
+   - **Reveal in Finder**: Opens Finder with the file selected so you can drag it into Logic (or any DAW).
+   - **Double‑click** a row: Copies the file path to the clipboard.
 
 ---
 
-## Options to Build the Plugin
+## Requirements
 
-| Option | AU | VST3 | Effort | Notes |
-|--------|----|------|--------|-------|
-| **JUCE** | ✅ | ✅ | Low | Projucer → Audio Plug-In, enable AU + VST3. Easiest cross-format. |
-| **Raw Apple AU** | ✅ | ❌ | Medium | AudioToolbox + ComponentManager; no VST3. See `MinimalAU/` and Apple’s “Audio Unit Programming Guide”. |
-| **Steinberg VST3 SDK** | ❌ | ✅ | Medium | C++; license terms apply. Need separate AU (e.g. JUCE or raw) for AU. |
-| **DPF (DISTRHO)** | ❌ | ✅ | Low | C++; VST3 only on macOS unless wrapped. |
-
-**Recommendation:** Use **JUCE** for both AU and VST3 with one codebase; or start with **raw AU** (this repo’s `MinimalAU/`) if you want no external deps and AU-only first.
-
----
-
-## This Repo Layout
-
-- **README.md** (this file) — Overview and build options.
-- **AceForge.md** — AceForge API summary for the plugin (health, generate, status, audio).
-- **AceForgeClient/** — C++ HTTP client for AceForge (macOS impl; use from background thread). See AceForgeClient/README.md.
-- **MinimalAU/** — AU scaffold: pattern and placeholder; **working AU** via Xcode “Audio Unit Extension” or JUCE (see MinimalAU/README.md).
-- **protocol.md** — Optional low-level protocol sketch (AceForge uses HTTP, so this is secondary).
-
----
-
-## AceForge plugin flow
-
-1. **Config:** Base URL `http://127.0.0.1:5056` (or user setting). Optional: `healthCheck()` on init.
-2. **UI / params:** User enters prompt (songDescription), duration, task type, etc.
-3. **Generate:** `AceForgeClient::startGeneration(params)` → `jobId`.
-4. **Poll:** Timer or background thread calls `getStatus(jobId)` until `succeeded` or `failed`.
-5. **Fetch:** On success, `fetchAudio(result.audioUrl)` → WAV bytes → decode to float → fill playback ring buffer.
-6. **Play:** Render callback reads from ring buffer; output silence when idle or no buffer.
+- **AceForge** (or compatible API) running at `http://127.0.0.1:5056`. The plugin shows “AceForge: connected” when it can reach the server.
+- macOS (Apple Silicon). AU and VST3 are built; install and rescan in your DAW.
 
 ---
 
 ## Build and install
 
-1. Build the component (see `MinimalAU/README.md`).
-2. Copy the built `.component` to:
-   - `~/Library/Audio/Plug-Ins/Components/`
-3. Rescan plugins in your DAW (e.g. Logic: Preferences → Plug-In Manager → Reset & Rescan).
-4. Run your ML host on a fixed port (e.g. `127.0.0.1:8765`); in the plugin you’ll connect to that port (see `MinimalAU/` source comments).
+From the **repo root**:
+
+```bash
+cmake -B build -G "Unix Makefiles" -DCMAKE_OSX_ARCHITECTURES=arm64
+# or: cmake -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES=arm64
+cmake --build build --config Release
+```
+
+Built artefacts:
+
+- **AU:** `build/ml-bridge/plugin/AceForgeBridge_artefacts/Release/AU/AceForge-Bridge.component`
+- **VST3:** `build/ml-bridge/plugin/AceForgeBridge_artefacts/Release/VST3/AceForge-Bridge.vst3`
+
+Copy them to:
+
+- `~/Library/Audio/Plug-Ins/Components/` (AU)
+- `~/Library/Audio/Plug-Ins/VST3/` (VST3)
+
+Then rescan plugins in your DAW.
+
+### Installer (.pkg)
+
+After building, from the repo root:
+
+```bash
+./scripts/build-installer-pkg.sh --sign-plugins --version 0.1.0
+```
+
+- **Output:** `release-artefacts/AceForgeBridge-macOS-Installer.pkg` and `release-artefacts/AceForgeBridge-macOS-AU-VST3.zip`.
+- **Install:** `sudo installer -pkg release-artefacts/AceForgeBridge-macOS-Installer.pkg -target /` or open the `.pkg` in Finder.
+
+See **BUILD_AND_CI.md** for details and GitHub Actions release.
 
 ---
 
-## Next steps
+## Repo layout (ml-bridge)
 
-1. **UI:** Prompt field, duration, Generate button, progress, play/stop (optional: list songs, reference tracks).
-2. **WAV decoder:** In plugin or use framework (e.g. JUCE) to convert fetchAudio() bytes to float for the ring buffer.
-3. **Windows:** Implement AceForgeClient with libcurl or JUCE networking for VST3 on Windows.
+| Path | Description |
+|------|-------------|
+| **plugin/** | JUCE plugin (Processor + Editor), AU + VST3 target |
+| **AceForgeClient/** | HTTP client for AceForge API (macOS; see AceForgeClient/README.md) |
+| **AceForge.md** | AceForge API summary (health, generate, status, audio) |
+| **BUILD_AND_CI.md** | Build steps and CI/release workflow |
+| **DEBUGGING.md** | Crash / log and trace notes |
+
+---
+
+## Architecture (brief)
+
+- **Plugin:** Instrument (stereo out). Background thread: `AceForgeClient` → POST `/api/generate`, poll `/api/generate/status/<jobId>`, GET audio URL → `fetchAudio(url)` → decode WAV → fill double-buffered playback; message thread decodes and saves to library.
+- **AceForge:** Local server; REST API for generation, status, and serving WAVs. Base URL `http://127.0.0.1:5056` (default).
+
+---
+
+## Optional / future
+
+- **Windows:** AceForgeClient is macOS-only (NSURLSession); Windows would need a different implementation (e.g. libcurl or JUCE networking).
+- **Base URL in UI:** Currently fixed in code; could add a settings field.
+- **Drag from plugin into DAW:** The plugin supports starting a file drag from the library list; some hosts (e.g. Logic when the plugin runs in a separate process) may not accept drops from the plugin window. Use **Insert into DAW** or **Reveal in Finder** for reliable workflows.

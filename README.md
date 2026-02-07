@@ -12,6 +12,9 @@ Experimental **AU** and **VST3** plugin that connects your DAW to the [AceForge]
 
 Full description, build details, and installer steps: **ml-bridge/README.md**.
 
+<img width="600" alt="Screenshot 2026-02-06 at 16 42 12" src="https://github.com/user-attachments/assets/1efbd3b3-4112-4aca-ad15-2221fd99f4d7" />
+
+
 ## Quick start
 
 1. **Build** (from repo root):
